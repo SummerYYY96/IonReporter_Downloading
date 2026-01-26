@@ -1,4 +1,4 @@
-# IonReporter_Downlaoding  
+# IonReporter_Downloading  
 This script downloads either VCFs or BAM file directly from ThermoFisher Ion Reporter using its API call.  
 To run this script you will need a separate `.conf` file (not included here) with the following fields:  
 ```
