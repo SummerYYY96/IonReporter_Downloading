@@ -57,9 +57,6 @@ def load_config_ini(config_path: str):
     }
 
 
-# -----------------------------
-# Minimal-change class
-# -----------------------------
 class IonReporterDownloader:
     def __init__(self, config_path: str):
         cfg = load_config_ini(config_path)
@@ -88,7 +85,7 @@ class IonReporterDownloader:
         return url
 
     # -------------------------
-    # Your original functions
+    # OG functions for downloading VCFs
     # -------------------------
     def get_download_link(self, sample):
         """
@@ -272,9 +269,10 @@ class IonReporterDownloader:
         )
 
 # adding BAM downloading 
-    def download_bam_file(self, url: str, sample: str):
+    def download_bam_file(self, url: str, sample: str, type_suffix: str = ""):
         """
-        Download a BAM file from the given inputBam URL and save it as {sample_name}.bam.
+        Download a BAM file from the given inputBam URL and save as
+        {ionxpress_id}_{sample}{type_suffix}.bam (type_suffix e.g. _DNA or _RNA).
         """
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -293,11 +291,14 @@ class IonReporterDownloader:
         if not raw_bam_name.startswith("IonXpress"):
             raise ValueError(f"BAM ID must start with 'IonXpress': {raw_bam_name}")
 
-        if raw_bam_name.endswith("_rawlib.bam"):
+        # RNA input BAMs use *_rawlib.basecaller.bam; DNA uses *_rawlib.bam
+        if raw_bam_name.endswith("_rawlib.basecaller.bam"):
+            raw_bam_id = raw_bam_name[:-len("_rawlib.basecaller.bam")]
+        elif raw_bam_name.endswith("_rawlib.bam"):
             raw_bam_id = raw_bam_name[:-len("_rawlib.bam")]
         else:
             raw_bam_id = raw_bam_name[:-len(".bam")]
-        out_path = os.path.join(self.BAM_DIR, f"{raw_bam_id}_{sample}.bam")
+        out_path = os.path.join(self.BAM_DIR, f"{raw_bam_id}_{sample}{type_suffix}.bam")
         
         try:
             with requests.get(url, headers=headers, stream=True, verify=False, timeout=600) as r:
@@ -321,9 +322,9 @@ class IonReporterDownloader:
 
     def fetch_and_download_bams(self, sample: str):
         """
-        Fetch inputBam links for an analysis and download the BAM files.
-        
-        Returns a dict mapping sampleName -> bam_path.
+        Fetch inputBam links for an analysis and download BAMs for DNA and RNA.
+
+        Returns a dict mapping sampleName -> {"bam", "bai"}.
         """
         link = self.get_download_link(sample)
         analysis = link[1] if link else None
@@ -341,27 +342,30 @@ class IonReporterDownloader:
             data = resp.json()
             
             for item in data:
-                for sample in item.get("sampleDetails", []):
-                    if sample.get("sampleRole") != "dna":
+                for detail in item.get("sampleDetails", []):
+                    role = (detail.get("sampleRole") or "").lower()
+                    if role not in ("dna", "rna"):
                         continue
 
-                    sample_name = sample.get("sampleName")
-                    input_bams = sample.get("inputBam", [])
+                    type_suffix = "_DNA" if role == "dna" else "_RNA"
+                    sample_name = detail.get("sampleName")
+                    input_bams = detail.get("inputBam", [])
                     if input_bams:
-                        bam_url = input_bams[0]  # usually one inputBam
+                        bam_url = input_bams[0]
                         bam_url = self._rewrite_url_if_needed(bam_url)
-                        downloaded_bam = self.download_bam_file(bam_url, sample_name)
-                        # generate bai
+                        downloaded_bam = self.download_bam_file(
+                            bam_url, sample_name, type_suffix=type_suffix
+                        )
                         if downloaded_bam:
-                            print(f"Indexing BAM for {sample_name}")
+                            print(f"Indexing BAM for {sample_name}{type_suffix}")
                             downloaded_bai = self.index_bam(downloaded_bam)
                         else:
                             downloaded_bai = None
 
                         results[sample_name] = {
                             "bam": downloaded_bam,
-                            "bai": downloaded_bai
-                        } # return this simply for debugging in future 
+                            "bai": downloaded_bai,
+                        }
             return results
         
         except requests.RequestException as e:
